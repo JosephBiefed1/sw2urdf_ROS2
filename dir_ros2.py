@@ -1,66 +1,187 @@
 import os
+import sys
 import shutil
-import tkinter as tk
-from tkinter import filedialog
+import argparse
 import subprocess
+from pathlib import Path
 
-# 1. Create tkinter root window
-root = tk.Tk()
-root.withdraw()  # Hide the main window
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
 
-# 2. Open folder selection dialog to choose the target directory
-target_directory = filedialog.askdirectory(title="Select Target Directory")
-# Check if the selected directory is valid
-if not target_directory:
-    print("No valid directory selected.")
-else:
-    print(f"Selected directory: {target_directory}")
 
-    # 3. Delete the 'launch' folder if it exists
-    launch_folder = os.path.join(target_directory, 'launch')
-    if os.path.exists(launch_folder) and os.path.isdir(launch_folder):
-        try:
-            shutil.rmtree(launch_folder)
-            print("Successfully deleted the 'launch' folder.")
-        except Exception as e:
-            print(f"Error deleting 'launch' folder: {e}")
-    else:
-        print("'launch' folder does not exist.")
+class ROS2PackageSetupError(Exception):
+    pass
 
-    # 4. Delete 'CMakeLists.txt' file if it exists
-    cmake_file = os.path.join(target_directory, 'CMakeLists.txt')
-    if os.path.exists(cmake_file) and os.path.isfile(cmake_file):
-        try:
-            os.remove(cmake_file)
-            print("Successfully deleted the 'CMakeLists.txt' file.")
-        except Exception as e:
-            print(f"Error deleting 'CMakeLists.txt' file: {e}")
-    else:
-        print("'CMakeLists.txt' file does not exist.")
 
-    # 5. Delete 'package.xml' file if it exists
-    package_file = os.path.join(target_directory, 'package.xml')
-    if os.path.exists(package_file) and os.path.isfile(package_file):
-        try:
-            os.remove(package_file)
-            print("Successfully deleted the 'package.xml' file.")
-        except Exception as e:
-            print(f"Error deleting 'package.xml' file: {e}")
-    else:
-        print("'package.xml' file does not exist.")
+class DependencyCheckError(ROS2PackageSetupError):
+    pass
 
-    # 6. Create an empty 'launch' folder
+
+def check_file_exists(file_path: str, file_description: str = "文件") -> None:
+    if not os.path.isfile(file_path):
+        raise DependencyCheckError(f"{file_description} 不存在: {file_path}")
+
+
+def check_directory_exists(dir_path: str, dir_description: str = "目录") -> None:
+    if not os.path.isdir(dir_path):
+        raise DependencyCheckError(f"{dir_description} 不存在: {dir_path}")
+
+
+def check_command_available(command: str) -> bool:
     try:
-        os.makedirs(launch_folder, exist_ok=True)
-        print("Successfully created an empty 'launch' folder.")
-    except Exception as e:
-        print(f"Error creating 'launch' folder: {e}")
+        subprocess.run(
+            [command, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=5
+        )
+        return True
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
 
-    # Get package_name (the name of the target directory)
-    package_name = os.path.basename(target_directory)
 
-    # 7. Create display.launch.py file content
-    launch_content = f"""import os
+def write_file_content(file_path: str, content: str, encoding: str = "utf-8") -> None:
+    parent_dir = os.path.dirname(file_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    with open(file_path, 'w', encoding=encoding) as f:
+        f.write(content)
+
+
+def read_file_content(file_path: str, encoding: str = "utf-8") -> str:
+    with open(file_path, 'r', encoding=encoding) as f:
+        return f.read()
+
+
+def insert_content_at_line(source_file: str, target_file: str, line_number: int) -> None:
+    source_content = read_file_content(source_file)
+    target_lines = read_file_content(target_file).splitlines(keepends=True)
+
+    insert_index = min(line_number - 1, len(target_lines))
+    target_lines.insert(insert_index, source_content + '\n')
+
+    write_file_content(target_file, ''.join(target_lines))
+    print(f"内容已成功插入到 {target_file} 第 {line_number} 行")
+
+
+def replace_first_line(file_path: str, new_first_line: str) -> None:
+    lines = read_file_content(file_path).splitlines(keepends=True)
+    if lines:
+        lines[0] = new_first_line + '\n'
+    write_file_content(file_path, ''.join(lines))
+
+
+def delete_directory(dir_path: str) -> bool:
+    if os.path.isdir(dir_path):
+        try:
+            shutil.rmtree(dir_path)
+            print(f"已删除目录: {dir_path}")
+            return True
+        except Exception as e:
+            print(f"删除目录失败: {e}")
+            return False
+    return False
+
+
+def delete_file(file_path: str) -> bool:
+    if os.path.isfile(file_path):
+        try:
+            os.remove(file_path)
+            print(f"已删除文件: {file_path}")
+            return True
+        except Exception as e:
+            print(f"删除文件失败: {e}")
+            return False
+    return False
+
+
+def ensure_directory(dir_path: str) -> None:
+    os.makedirs(dir_path, exist_ok=True)
+
+
+def convert_urdf_to_sdf(urdf_file: str, output_dir: str) -> str:
+    ensure_directory(output_dir)
+    sdf_file = os.path.join(output_dir, "model.sdf")
+    
+    command = f'gz sdf -p "{urdf_file}"'
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        with open(sdf_file, 'w', encoding='utf-8') as f:
+            f.write(result.stdout)
+        print(f"URDF 转换为 SDF 成功: {sdf_file}")
+        return sdf_file
+    except subprocess.CalledProcessError as e:
+        raise ROS2PackageSetupError(f"Gazebo SDF 转换失败: {e.stderr}")
+    except subprocess.TimeoutExpired:
+        raise ROS2PackageSetupError("Gazebo SDF 转换超时")
+    except FileNotFoundError:
+        raise ROS2PackageSetupError("Gazebo 命令行工具 (gz) 未找到，请确保已安装 Gazebo")
+
+
+def deploy_gazebo_model(package_name: str, source_urdf_dir: str, 
+                         gazebo_models_dir: str) -> None:
+    target_dir = os.path.join(gazebo_models_dir, package_name)
+    
+    if os.path.exists(target_dir):
+        print(f"目标目录已存在，先删除: {target_dir}")
+        shutil.rmtree(target_dir)
+    
+    ensure_directory(target_dir)
+    print(f"创建 Gazebo 模型目录: {target_dir}")
+
+    sdf_source = os.path.join(source_urdf_dir, "model.sdf")
+    sdf_target = os.path.join(target_dir, "model.sdf")
+    if os.path.exists(sdf_source):
+        shutil.copy2(sdf_source, sdf_target)
+        print(f"已复制 SDF 文件")
+
+    meshes_source = os.path.join(os.path.dirname(source_urdf_dir), "meshes")
+    meshes_target = os.path.join(target_dir, "meshes")
+    if os.path.exists(meshes_source):
+        shutil.copytree(meshes_source, meshes_target)
+        print(f"已复制 meshes 目录")
+
+    textures_source = os.path.join(os.path.dirname(source_urdf_dir), "textures")
+    textures_target = os.path.join(target_dir, "materials", "textures")
+    if os.path.exists(textures_source):
+        ensure_directory(textures_target)
+        shutil.copytree(textures_source, textures_target, dirs_exist_ok=True)
+        print(f"已复制 textures 目录")
+
+    model_config_path = os.path.join(target_dir, "model.config")
+    model_config = f"""<?xml version="1.0"?>
+<model>
+  <name>{package_name}</name>
+  <version>1.0</version>
+  <sdf version="1.7">model.sdf</sdf>
+  <author>
+    <name>todo</name>
+    <email>todo@todo.todo</email>
+  </author>
+  <description>
+    sw2urdf ROS2 for gazebo11
+  </description>
+</model>
+"""
+    write_file_content(model_config_path, model_config)
+    print(f"已创建 model.config")
+
+
+def create_display_launch(package_name: str, launch_dir: str) -> None:
+    launch_file = os.path.join(launch_dir, "display.launch.py")
+    content = f"""import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch_ros.actions import Node
@@ -69,29 +190,19 @@ from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
     package_dir = get_package_share_directory('{package_name}')
-
-    # URDF file path
     urdf_file = os.path.join(package_dir, 'urdf', '{package_name}.urdf')
 
-    # Read URDF file content
     with open(urdf_file, 'r') as file:
         robot_description = file.read()
 
-    # Create LaunchDescription
     return LaunchDescription([
-
-        # Declare urdf_file argument to allow external input
         DeclareLaunchArgument('urdf_file', default_value=urdf_file),
-
-        # Launch joint_state_publisher_gui node
         Node(
             package='joint_state_publisher_gui',
             executable='joint_state_publisher_gui',
             name='joint_state_publisher_gui',
             output='screen'
         ),
-
-        # Launch robot_state_publisher node with robot_description parameter
         Node(
             package='robot_state_publisher',
             executable='robot_state_publisher',
@@ -99,8 +210,6 @@ def generate_launch_description():
             output='screen',
             parameters=[{{'robot_description': robot_description}}]
         ),
-
-        # Launch rviz2 node with robot_description parameter
         Node(
             package='rviz2',
             executable='rviz2',
@@ -109,28 +218,65 @@ def generate_launch_description():
             parameters=[{{'robot_description': robot_description}}]
         ),
     ])
-    """
+"""
+    write_file_content(launch_file, content)
+    print(f"已创建 display.launch.py: {launch_file}")
 
-    # Target file path: display.launch.py
-    file_path = os.path.join(launch_folder, 'display.launch.py')
 
-    # Write content to display.launch.py file
-    try:
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(launch_content)
-        print(f"Successfully saved 'display.launch.py' as: {file_path}")
-    except Exception as e:
-        print(f"Error writing to file: {e}")
+def create_gazebo_launch(package_name: str, launch_dir: str) -> None:
+    launch_file = os.path.join(launch_dir, "gazebo.launch.py")
+    content = f"""import launch
+import launch_ros
+from ament_index_python.packages import get_package_share_directory
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+import os
 
-    # 8. Create CMakeLists.txt file content
-    cmake_content = f"""cmake_minimum_required(VERSION 3.8)
+
+def generate_launch_description():
+    robot_name_in_model = "{package_name}"
+    urdf_tutorial_path = get_package_share_directory('{package_name}')
+    default_model_path = os.path.join(
+        urdf_tutorial_path, 'urdf', '{package_name}.urdf')
+
+    with open(default_model_path, 'r') as urdf_file:
+        robot_description = urdf_file.read()
+
+    robot_state_publisher_node = launch_ros.actions.Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        parameters=[{{'robot_description': robot_description}}]
+    )
+
+    launch_gazebo = launch.actions.IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([get_package_share_directory(
+            'gazebo_ros'), '/launch', '/gazebo.launch.py']),
+    )
+
+    spawn_entity_node = launch_ros.actions.Node(
+        package='gazebo_ros',
+        executable='spawn_entity.py',
+        arguments=['-topic', '/robot_description',
+                   '-entity', robot_name_in_model])
+
+    return launch.LaunchDescription([
+        robot_state_publisher_node,
+        launch_gazebo,
+        spawn_entity_node
+    ])
+"""
+    write_file_content(launch_file, content)
+    print(f"已创建 gazebo.launch.py: {launch_file}")
+
+
+def create_cmakelists(package_name: str, target_dir: str) -> None:
+    cmake_file = os.path.join(target_dir, "CMakeLists.txt")
+    content = f"""cmake_minimum_required(VERSION 3.8)
 project({package_name})
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(robot_state_publisher REQUIRED)
@@ -142,32 +288,20 @@ install(DIRECTORY launch config meshes urdf
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
-  # The following line skips the linter which checks for copyrights
-  # Comment the line when a copyright and license is added to all source files
   set(ament_cmake_copyright_FOUND TRUE)
-  # The following line skips cpplint (only works in a git repo)
-  # Comment the line when this package is in a git repo and when
-  # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
 
 ament_package()
-    """
+"""
+    write_file_content(cmake_file, content)
+    print(f"已创建 CMakeLists.txt: {cmake_file}")
 
-    # Target file path: CMakeLists.txt
-    cmake_file_path = os.path.join(target_directory, 'CMakeLists.txt')
 
-    # Write content to CMakeLists.txt file
-    try:
-        with open(cmake_file_path, 'w', encoding='utf-8') as file:
-            file.write(cmake_content)
-        print(f"Successfully saved 'CMakeLists.txt' as: {cmake_file_path}")
-    except Exception as e:
-        print(f"Error writing to file: {e}")
-
-    # 9. Create package.xml file content
-    xml_content = f"""<?xml version="1.0"?>
+def create_package_xml(package_name: str, target_dir: str) -> None:
+    xml_file = os.path.join(target_dir, "package.xml")
+    content = f"""<?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>{package_name}</name>
@@ -190,203 +324,160 @@ ament_package()
     <build_type>ament_cmake</build_type>
   </export>
 </package>
-    """
-
-    # Target file path: package.xml
-    xml_file_path = os.path.join(target_directory, 'package.xml')
-
-    # Write content to package.xml file
-    try:
-        with open(xml_file_path, 'w', encoding='utf-8') as file:
-            file.write(xml_content)
-        print(f"Successfully saved 'package.xml' as: {xml_file_path}")
-    except Exception as e:
-        print(f"Error writing to file: {e}")
-
-    def insert_content_at_line(source_file, target_file, line_number):
-        # Read content from source file
-        with open(source_file, 'r', encoding='utf-8') as src:
-            source_content = src.read()
-
-        # Read target file content
-        with open(target_file, 'r', encoding='utf-8') as tgt:
-            target_lines = tgt.readlines()  # Read lines from target file
-
-        # Insert source content at the specified line
-        # If the line number exceeds the number of lines in the target file, append the content to the end
-        if line_number > len(target_lines):
-            line_number = len(target_lines)
-
-        target_lines.insert(line_number - 1, source_content + '\n')
-
-        # Write modified content back to target file
-        with open(target_file, 'w', encoding='utf-8') as tgt:
-            tgt.writelines(target_lines)
-
-        print(
-            f"Content successfully inserted into {target_file} at line {line_number}")
-
-    source_file = 'insert_urdf.txt'
-    target_file = target_directory + '/urdf/' + \
-        os.path.basename(target_directory)+".urdf"
-    line_number = 7
-
-    insert_content_at_line(source_file, target_file, line_number)
-
-    # File path
-    file_path = target_file
-
-    # Content to replace
-    new_first_line = '''<?xml version="1.0" ?>'''
-
-    # Open the file for reading
-    with open(file_path, 'r', encoding='utf-8') as file:
-        lines = file.readlines()
-
-    if lines:
-        lines[0] = new_first_line + '\n'  # Ensure newline is added
-
-    # Write the modified content back to the file
-    with open(file_path, 'w', encoding='utf-8') as file:
-        file.writelines(lines)
-
-    urdf_folder = os.path.join(target_directory, "urdf")
-    command = f"gz sdf -p {target_file} > {urdf_folder}/model.sdf"
-    subprocess.run(command, shell=True, check=True)
-
-    source_file = 'insert_sdf.txt'
-    target_file = target_directory + '/urdf/' + "model.sdf"
-    line_number = 1
-
-    insert_content_at_line(source_file, target_file, line_number)
-
-    # Define file and target directory paths
-    source_sdf_file = target_directory + '/urdf/' + "model.sdf"
-    target_sdf_directory = os.path.join(os.path.expanduser(
-        "~"), ".gazebo", "models", f"{os.path.basename(target_directory)}")
-
-    # Check if target directory exists
-    if not os.path.exists(target_sdf_directory):
-        # If the directory does not exist, create it
-        os.makedirs(target_sdf_directory)
-        print(f"Directory {target_sdf_directory} created.")
-    else:
-        print(f"Directory {target_sdf_directory} already exists.")
-
-    # Perform file copy operation
-    target_path = os.path.join(
-        target_sdf_directory, os.path.basename(source_sdf_file))
-    shutil.copy(source_sdf_file, target_sdf_directory)
-    print(f"File {source_sdf_file} successfully copied to {target_sdf_directory}.")
-
-    model_config_content = f"""<?xml version="1.0"?>
-
-<model>
-  <name>{os.path.basename(target_directory)}</name>
-  <version>1.0</version>
-  <sdf version="1.7">model.sdf</sdf>
-
-  <author>
-    <name>todo</name>
-    <email>todo@todo.todo/email>
-  </author>
-
-  <description>
-    sw2urdf ROS2 for gazebo11
-  </description>
-</model>
-    """
-
-    model_config_path = target_sdf_directory
-    file_name = "model.config"
-    file_path = os.path.join(model_config_path, file_name)
-    try:
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(model_config_content)
-        print(f"Successfully saved 'sdf.config' as: {model_config_path}")
-    except Exception as e:
-        print(f"Error writing to file: {e}")
-
-    source_directory = target_directory+"/meshes"
-    destination_directory = target_sdf_directory+"/meshes"
-
-    if os.path.exists(destination_directory):
-        print(f"Target directory {destination_directory} already exists!")
-    else:
-        shutil.copytree(source_directory, destination_directory)
-        print(f"Directory {source_directory} successfully copied to {destination_directory}")
-
-    source_directory = target_directory+"/textures"
-    destination_directory = target_sdf_directory+"/materials/textures"
-
-    if os.path.exists(destination_directory):
-        print(f"Target directory {destination_directory} already exists!")
-    else:
-        shutil.copytree(source_directory, destination_directory)
-        print(f"Directory {source_directory} successfully copied to {destination_directory}")
-
-    file_path = os.path.join(target_directory, "urdf", "model.sdf")
-
-    try:
-        os.remove(file_path)  # Delete file
-        print(f"File {file_path} successfully deleted.")
-    except FileNotFoundError:
-        print(f"File {file_path} does not exist.")
-    except PermissionError:
-        print(f"No permission to delete file {file_path}.")
-    except Exception as e:
-        print(f"Error deleting file: {e}")
-
-    # Gazebo launch file content
-    gazebo_launch_content = f"""import launch
-import launch_ros
-from ament_index_python.packages import get_package_share_directory
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-import os
+"""
+    write_file_content(xml_file, content)
+    print(f"已创建 package.xml: {xml_file}")
 
 
-def generate_launch_description():
-    # Get default path
-    robot_name_in_model = "{package_name}"
-    urdf_tutorial_path = get_package_share_directory('{package_name}')
-    default_model_path = os.path.join(
-        urdf_tutorial_path, 'urdf', '{package_name}.urdf')
+def validate_prerequisites() -> None:
+    if not check_command_available("gz"):
+        raise DependencyCheckError(
+            "Gazebo 命令行工具 (gz) 不可用。"
+            "请确保已安装 Gazebo 并将 gz 添加到系统 PATH。"
+        )
+    
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    insert_urdf = os.path.join(script_dir, "insert_urdf.txt")
+    insert_sdf = os.path.join(script_dir, "insert_sdf.txt")
+    
+    if not os.path.isfile(insert_urdf):
+        raise DependencyCheckError(
+            f"insert_urdf.txt 不存在: {insert_urdf}\n"
+            "请确保该文件与脚本位于同一目录"
+        )
+    if not os.path.isfile(insert_sdf):
+        raise DependencyCheckError(
+            f"insert_sdf.txt 不存在: {insert_sdf}\n"
+            "请确保该文件与脚本位于同一目录"
+        )
 
-    # Read URDF file content
-    with open(default_model_path, 'r') as urdf_file:
-        robot_description = urdf_file.read()
 
-    robot_state_publisher_node = launch_ros.actions.Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        parameters=[{{'robot_description': robot_description}}]
+def select_target_directory() -> str:
+    if not TKINTER_AVAILABLE:
+        raise ROS2PackageSetupError(
+            "tkinter 不可用，请通过命令行参数指定目标目录\n"
+            "使用: python dir_ros2.py /path/to/robot_package"
+        )
+    
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    
+    directory = filedialog.askdirectory(title="选择目标 ROS2 包目录")
+    
+    root.destroy()
+    
+    if not directory:
+        raise ROS2PackageSetupError("未选择有效目录")
+    
+    return directory
+
+
+def validate_target_directory(target_dir: str) -> str:
+    if not os.path.isdir(target_dir):
+        raise ROS2PackageSetupError(f"目标目录不存在: {target_dir}")
+    
+    package_name = os.path.basename(target_dir)
+    urdf_file = os.path.join(target_dir, "urdf", f"{package_name}.urdf")
+    
+    if not os.path.isfile(urdf_file):
+        raise ROS2PackageSetupError(
+            f"URDF 文件不存在: {urdf_file}\n"
+            "目标目录应包含 urdf/<package_name>.urdf 文件"
+        )
+    
+    return package_name
+
+
+def setup_ros2_package(target_directory: str) -> None:
+    package_name = os.path.basename(target_directory)
+    print(f"=" * 50)
+    print(f"开始配置 ROS2 包: {package_name}")
+    print(f"目标目录: {target_directory}")
+    print(f"=" * 50)
+
+    launch_dir = os.path.join(target_directory, "launch")
+    delete_directory(launch_dir)
+    ensure_directory(launch_dir)
+
+    delete_file(os.path.join(target_directory, "CMakeLists.txt"))
+    delete_file(os.path.join(target_directory, "package.xml"))
+
+    create_cmakelists(package_name, target_directory)
+    create_package_xml(package_name, target_directory)
+    create_display_launch(package_name, launch_dir)
+    create_gazebo_launch(package_name, launch_dir)
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    insert_urdf_file = os.path.join(script_dir, "insert_urdf.txt")
+    insert_sdf_file = os.path.join(script_dir, "insert_sdf.txt")
+
+    urdf_file = os.path.join(target_directory, "urdf", f"{package_name}.urdf")
+    insert_content_at_line(insert_urdf_file, urdf_file, 7)
+    replace_first_line(urdf_file, '<?xml version="1.0" ?>')
+
+    urdf_dir = os.path.join(target_directory, "urdf")
+    sdf_file = convert_urdf_to_sdf(urdf_file, urdf_dir)
+
+    insert_content_at_line(insert_sdf_file, sdf_file, 1)
+
+    gazebo_models_dir = os.path.expanduser("~/.gazebo/models")
+    deploy_gazebo_model(package_name, urdf_dir, gazebo_models_dir)
+
+    temp_sdf = os.path.join(urdf_dir, "model.sdf")
+    delete_file(temp_sdf)
+
+    print(f"=" * 50)
+    print(f"ROS2 包配置完成: {package_name}")
+    print(f"=" * 50)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="ROS2 机器人模型转换与部署工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例用法:
+  python dir_ros2.py                                  # 使用图形界面选择目录
+  python dir_ros2.py /path/to/robot_package           # 通过命令行指定目录
+        """
     )
-
-    # Include another launch file for Gazebo
-    launch_gazebo = launch.actions.IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([get_package_share_directory(
-            'gazebo_ros'), '/launch', '/gazebo.launch.py']),
+    parser.add_argument(
+        "target_directory",
+        nargs="?",
+        default="",
+        help="ROS2 包的目标目录路径"
     )
-
-    # Request Gazebo to spawn the robot
-    spawn_entity_node = launch_ros.actions.Node(
-        package='gazebo_ros',
-        executable='spawn_entity.py',
-        arguments=['-topic', '/robot_description',
-                   '-entity', robot_name_in_model])
-
-    return launch.LaunchDescription([
-        robot_state_publisher_node,
-        launch_gazebo,
-        spawn_entity_node
-    ])
-    """
-
-    file_path = os.path.join(launch_folder, 'gazebo.launch.py')
+    parser.add_argument(
+        "--skip-validation",
+        action="store_true",
+        help="跳过依赖项检查"
+    )
+    
+    args = parser.parse_args()
 
     try:
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(gazebo_launch_content)
-        print(f"Successfully saved 'gazebo.launch.py' as: {file_path}")
+        if not args.skip_validation:
+            validate_prerequisites()
+        
+        if args.target_directory:
+            target_directory = os.path.abspath(args.target_directory)
+        else:
+            target_directory = select_target_directory()
+        
+        package_name = validate_target_directory(target_directory)
+        setup_ros2_package(target_directory)
+        
+    except ROS2PackageSetupError as e:
+        print(f"错误: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n操作已取消")
+        sys.exit(130)
     except Exception as e:
-        print(f"Error writing to file: {e}")
+        print(f"未知错误: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
