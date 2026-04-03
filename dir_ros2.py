@@ -21,14 +21,14 @@ class DependencyCheckError(ROS2PackageSetupError):
     pass
 
 
-def check_file_exists(file_path: str, file_description: str = "文件") -> None:
+def check_file_exists(file_path: str, file_description: str = "File") -> None:
     if not os.path.isfile(file_path):
-        raise DependencyCheckError(f"{file_description} 不存在: {file_path}")
+        raise DependencyCheckError(f"{file_description} does not exist: {file_path}")
 
 
-def check_directory_exists(dir_path: str, dir_description: str = "目录") -> None:
+def check_directory_exists(dir_path: str, dir_description: str = "Directory") -> None:
     if not os.path.isdir(dir_path):
-        raise DependencyCheckError(f"{dir_description} 不存在: {dir_path}")
+        raise DependencyCheckError(f"{dir_description} does not exist: {dir_path}")
 
 
 def check_command_available(command: str) -> bool:
@@ -66,7 +66,7 @@ def insert_content_at_line(source_file: str, target_file: str, line_number: int)
     target_lines.insert(insert_index, source_content + '\n')
 
     write_file_content(target_file, ''.join(target_lines))
-    print(f"内容已成功插入到 {target_file} 第 {line_number} 行")
+    print(f"Content successfully inserted into {target_file} at line {line_number}")
 
 
 def replace_first_line(file_path: str, new_first_line: str) -> None:
@@ -80,10 +80,10 @@ def delete_directory(dir_path: str) -> bool:
     if os.path.isdir(dir_path):
         try:
             shutil.rmtree(dir_path)
-            print(f"已删除目录: {dir_path}")
+            print(f"Directory deleted: {dir_path}")
             return True
         except Exception as e:
-            print(f"删除目录失败: {e}")
+            print(f"Failed to delete directory: {e}")
             return False
     return False
 
@@ -92,10 +92,10 @@ def delete_file(file_path: str) -> bool:
     if os.path.isfile(file_path):
         try:
             os.remove(file_path)
-            print(f"已删除文件: {file_path}")
+            print(f"File deleted: {file_path}")
             return True
         except Exception as e:
-            print(f"删除文件失败: {e}")
+            print(f"Failed to delete file: {e}")
             return False
     return False
 
@@ -120,14 +120,14 @@ def convert_urdf_to_sdf(urdf_file: str, output_dir: str) -> str:
         )
         with open(sdf_file, 'w', encoding='utf-8') as f:
             f.write(result.stdout)
-        print(f"URDF 转换为 SDF 成功: {sdf_file}")
+        print(f"URDF to SDF conversion successful: {sdf_file}")
         return sdf_file
     except subprocess.CalledProcessError as e:
-        raise ROS2PackageSetupError(f"Gazebo SDF 转换失败: {e.stderr}")
+        raise ROS2PackageSetupError(f"Gazebo SDF conversion failed: {e.stderr}")
     except subprocess.TimeoutExpired:
-        raise ROS2PackageSetupError("Gazebo SDF 转换超时")
+        raise ROS2PackageSetupError("Gazebo SDF conversion timed out")
     except FileNotFoundError:
-        raise ROS2PackageSetupError("Gazebo 命令行工具 (gz) 未找到，请确保已安装 Gazebo")
+        raise ROS2PackageSetupError("Gazebo command line tool (gz) not found. Please ensure Gazebo is installed")
 
 
 def deploy_gazebo_model(package_name: str, source_urdf_dir: str, 
@@ -135,30 +135,30 @@ def deploy_gazebo_model(package_name: str, source_urdf_dir: str,
     target_dir = os.path.join(gazebo_models_dir, package_name)
     
     if os.path.exists(target_dir):
-        print(f"目标目录已存在，先删除: {target_dir}")
+        print(f"Target directory already exists, removing: {target_dir}")
         shutil.rmtree(target_dir)
-    
+
     ensure_directory(target_dir)
-    print(f"创建 Gazebo 模型目录: {target_dir}")
+    print(f"Creating Gazebo model directory: {target_dir}")
 
     sdf_source = os.path.join(source_urdf_dir, "model.sdf")
     sdf_target = os.path.join(target_dir, "model.sdf")
     if os.path.exists(sdf_source):
         shutil.copy2(sdf_source, sdf_target)
-        print(f"已复制 SDF 文件")
+        print(f"SDF file copied")
 
     meshes_source = os.path.join(os.path.dirname(source_urdf_dir), "meshes")
     meshes_target = os.path.join(target_dir, "meshes")
     if os.path.exists(meshes_source):
         shutil.copytree(meshes_source, meshes_target)
-        print(f"已复制 meshes 目录")
+        print(f"Meshes directory copied")
 
     textures_source = os.path.join(os.path.dirname(source_urdf_dir), "textures")
     textures_target = os.path.join(target_dir, "materials", "textures")
     if os.path.exists(textures_source):
         ensure_directory(textures_target)
         shutil.copytree(textures_source, textures_target, dirs_exist_ok=True)
-        print(f"已复制 textures 目录")
+        print(f"Textures directory copied")
 
     model_config_path = os.path.join(target_dir, "model.config")
     model_config = f"""<?xml version="1.0"?>
@@ -176,7 +176,7 @@ def deploy_gazebo_model(package_name: str, source_urdf_dir: str,
 </model>
 """
     write_file_content(model_config_path, model_config)
-    print(f"已创建 model.config")
+    print(f"model.config created")
 
 
 def create_display_launch(package_name: str, launch_dir: str) -> None:
@@ -220,7 +220,7 @@ def generate_launch_description():
     ])
 """
     write_file_content(launch_file, content)
-    print(f"已创建 display.launch.py: {launch_file}")
+    print(f"display.launch.py created: {launch_file}")
 
 
 def create_gazebo_launch(package_name: str, launch_dir: str) -> None:
@@ -265,7 +265,7 @@ def generate_launch_description():
     ])
 """
     write_file_content(launch_file, content)
-    print(f"已创建 gazebo.launch.py: {launch_file}")
+    print(f"gazebo.launch.py created: {launch_file}")
 
 
 def create_cmakelists(package_name: str, target_dir: str) -> None:
@@ -296,7 +296,7 @@ endif()
 ament_package()
 """
     write_file_content(cmake_file, content)
-    print(f"已创建 CMakeLists.txt: {cmake_file}")
+    print(f"CMakeLists.txt created: {cmake_file}")
 
 
 def create_package_xml(package_name: str, target_dir: str) -> None:
@@ -326,14 +326,14 @@ def create_package_xml(package_name: str, target_dir: str) -> None:
 </package>
 """
     write_file_content(xml_file, content)
-    print(f"已创建 package.xml: {xml_file}")
+    print(f"package.xml created: {xml_file}")
 
 
 def validate_prerequisites() -> None:
     if not check_command_available("gz"):
         raise DependencyCheckError(
-            "Gazebo 命令行工具 (gz) 不可用。"
-            "请确保已安装 Gazebo 并将 gz 添加到系统 PATH。"
+            "Gazebo command line tool (gz) is not available. "
+            "Please ensure Gazebo is installed and gz is in your system PATH."
         )
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -342,48 +342,48 @@ def validate_prerequisites() -> None:
     
     if not os.path.isfile(insert_urdf):
         raise DependencyCheckError(
-            f"insert_urdf.txt 不存在: {insert_urdf}\n"
-            "请确保该文件与脚本位于同一目录"
+            f"insert_urdf.txt not found: {insert_urdf}\n"
+            "Please ensure this file is in the same directory as the script"
         )
     if not os.path.isfile(insert_sdf):
         raise DependencyCheckError(
-            f"insert_sdf.txt 不存在: {insert_sdf}\n"
-            "请确保该文件与脚本位于同一目录"
+            f"insert_sdf.txt not found: {insert_sdf}\n"
+            "Please ensure this file is in the same directory as the script"
         )
 
 
 def select_target_directory() -> str:
     if not TKINTER_AVAILABLE:
         raise ROS2PackageSetupError(
-            "tkinter 不可用，请通过命令行参数指定目标目录\n"
-            "使用: python dir_ros2.py /path/to/robot_package"
+            "tkinter is not available. Please specify target directory via command line argument\n"
+            "Usage: python dir_ros2.py /path/to/robot_package"
         )
-    
+
     root = tk.Tk()
     root.withdraw()
     root.attributes('-topmost', True)
-    
-    directory = filedialog.askdirectory(title="选择目标 ROS2 包目录")
-    
+
+    directory = filedialog.askdirectory(title="Select target ROS2 package directory")
+
     root.destroy()
-    
+
     if not directory:
-        raise ROS2PackageSetupError("未选择有效目录")
+        raise ROS2PackageSetupError("No valid directory selected")
     
     return directory
 
 
 def validate_target_directory(target_dir: str) -> str:
     if not os.path.isdir(target_dir):
-        raise ROS2PackageSetupError(f"目标目录不存在: {target_dir}")
-    
+        raise ROS2PackageSetupError(f"Target directory does not exist: {target_dir}")
+
     package_name = os.path.basename(target_dir)
     urdf_file = os.path.join(target_dir, "urdf", f"{package_name}.urdf")
-    
+
     if not os.path.isfile(urdf_file):
         raise ROS2PackageSetupError(
-            f"URDF 文件不存在: {urdf_file}\n"
-            "目标目录应包含 urdf/<package_name>.urdf 文件"
+            f"URDF file does not exist: {urdf_file}\n"
+            "Target directory should contain urdf/<package_name>.urdf file"
         )
     
     return package_name
@@ -392,8 +392,8 @@ def validate_target_directory(target_dir: str) -> str:
 def setup_ros2_package(target_directory: str) -> None:
     package_name = os.path.basename(target_directory)
     print(f"=" * 50)
-    print(f"开始配置 ROS2 包: {package_name}")
-    print(f"目标目录: {target_directory}")
+    print(f"Starting ROS2 package setup: {package_name}")
+    print(f"Target directory: {target_directory}")
     print(f"=" * 50)
 
     launch_dir = os.path.join(target_directory, "launch")
@@ -428,30 +428,30 @@ def setup_ros2_package(target_directory: str) -> None:
     delete_file(temp_sdf)
 
     print(f"=" * 50)
-    print(f"ROS2 包配置完成: {package_name}")
+    print(f"ROS2 package setup complete: {package_name}")
     print(f"=" * 50)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ROS2 机器人模型转换与部署工具",
+        description="ROS2 robot model conversion and deployment tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例用法:
-  python dir_ros2.py                                  # 使用图形界面选择目录
-  python dir_ros2.py /path/to/robot_package           # 通过命令行指定目录
+Example usage:
+  python dir_ros2.py                                  # Use GUI to select directory
+  python dir_ros2.py /path/to/robot_package           # Specify directory via command line
         """
     )
     parser.add_argument(
         "target_directory",
         nargs="?",
         default="",
-        help="ROS2 包的目标目录路径"
+        help="Target directory path for the ROS2 package"
     )
     parser.add_argument(
         "--skip-validation",
         action="store_true",
-        help="跳过依赖项检查"
+        help="Skip dependency checks"
     )
     
     args = parser.parse_args()
@@ -469,13 +469,13 @@ def main():
         setup_ros2_package(target_directory)
         
     except ROS2PackageSetupError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\n操作已取消")
+        print("\nOperation cancelled")
         sys.exit(130)
     except Exception as e:
-        print(f"未知错误: {e}", file=sys.stderr)
+        print(f"Unknown error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
