@@ -249,11 +249,11 @@ def generate_launch_description():
 
     launch_gazebo = launch.actions.IncludeLaunchDescription(
         PythonLaunchDescriptionSource([get_package_share_directory(
-            'gazebo_ros'), '/launch', '/gazebo.launch.py']),
+            'ros_gz_sim'), '/launch', '/gazebo.launch.py']),
     )
 
     spawn_entity_node = launch_ros.actions.Node(
-        package='gazebo_ros',
+        package='ros_gz_sim',
         executable='spawn_entity.py',
         arguments=['-topic', '/robot_description',
                    '-entity', robot_name_in_model])
