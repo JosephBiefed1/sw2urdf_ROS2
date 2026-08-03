@@ -3,6 +3,7 @@ import sys
 import shutil
 import argparse
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 try:
@@ -130,6 +131,44 @@ def convert_urdf_to_sdf(urdf_file: str, output_dir: str) -> str:
         raise ROS2PackageSetupError("Gazebo command line tool (gz) not found. Please ensure Gazebo is installed")
 
 
+def create_model_config(model_dir: str, model_name: str, sdf_file: str) -> str:
+    """Create model.config next to model.sdf for a Gazebo model package."""
+    try:
+        sdf_root = ET.parse(sdf_file).getroot()
+    except ET.ParseError as e:
+        raise ROS2PackageSetupError(f"Invalid SDF XML in {sdf_file}: {e}") from e
+
+    sdf_version = sdf_root.get("version")
+    sdf_model = sdf_root.find("model")
+    sdf_model_name = sdf_model.get("name") if sdf_model is not None else None
+    if not sdf_version or not sdf_model_name:
+        raise ROS2PackageSetupError(
+            f"SDF must contain <sdf version=...><model name=...>: {sdf_file}"
+        )
+    if sdf_model_name != model_name:
+        raise ROS2PackageSetupError(
+            f"URDF model name '{model_name}' does not match SDF model name "
+            f"'{sdf_model_name}'"
+        )
+
+    config_root = ET.Element("model")
+    ET.SubElement(config_root, "name").text = model_name
+    ET.SubElement(config_root, "version").text = "1.0"
+    sdf_element = ET.SubElement(config_root, "sdf", {"version": sdf_version})
+    sdf_element.text = "model.sdf"
+    ET.SubElement(config_root, "description").text = (
+        f"Gazebo Sim model generated from the {model_name} URDF."
+    )
+    ET.indent(config_root, space="  ")
+
+    model_config_path = os.path.join(model_dir, "model.config")
+    ET.ElementTree(config_root).write(
+        model_config_path, encoding="utf-8", xml_declaration=True
+    )
+    print(f"model.config created: {model_config_path}")
+    return model_config_path
+
+
 def deploy_gazebo_model(package_name: str, source_urdf_dir: str, 
                          gazebo_models_dir: str) -> None:
     target_dir = os.path.join(gazebo_models_dir, package_name)
@@ -160,23 +199,7 @@ def deploy_gazebo_model(package_name: str, source_urdf_dir: str,
         shutil.copytree(textures_source, textures_target, dirs_exist_ok=True)
         print(f"Textures directory copied")
 
-    model_config_path = os.path.join(target_dir, "model.config")
-    model_config = f"""<?xml version="1.0"?>
-<model>
-  <name>{package_name}</name>
-  <version>1.0</version>
-  <sdf version="1.7">model.sdf</sdf>
-  <author>
-    <name>todo</name>
-    <email>todo@todo.todo</email>
-  </author>
-  <description>
-    sw2urdf ROS2 for gazebo11
-  </description>
-</model>
-"""
-    write_file_content(model_config_path, model_config)
-    print(f"model.config created")
+    create_model_config(target_dir, package_name, sdf_target)
 
 
 def create_display_launch(package_name: str, launch_dir: str) -> None:
@@ -281,10 +304,17 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(robot_state_publisher REQUIRED)
 find_package(rviz2 REQUIRED)
-find_package(gazebo_ros REQUIRED)
+find_package(ros_gz_sim REQUIRED)
+
+install(FILES model.config model.sdf
+    DESTINATION share/${{PROJECT_NAME}})
 
 install(DIRECTORY launch config meshes urdf
     DESTINATION share/${{PROJECT_NAME}})
+
+install(DIRECTORY textures
+    DESTINATION share/${{PROJECT_NAME}}
+    OPTIONAL)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -315,7 +345,7 @@ def create_package_xml(package_name: str, target_dir: str) -> None:
   <depend>rclcpp</depend>
   <depend>robot_state_publisher</depend>
   <depend>rviz2</depend>
-  <depend>gazebo_ros</depend>
+  <depend>ros_gz_sim</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
@@ -371,6 +401,52 @@ def select_target_directory() -> str:
         raise ROS2PackageSetupError("No valid directory selected")
     
     return directory
+def get_model_name_from_urdf(urdf_file: str) -> str:
+    try:
+        root = ET.parse(urdf_file).getroot()
+    except ET.ParseError as e:
+        raise ROS2PackageSetupError(f"Invalid URDF XML in {urdf_file}: {e}") from e
+
+    model_name = root.get("name")
+    if not model_name:
+        raise ROS2PackageSetupError(f"Model name not found in URDF file: {urdf_file}")
+    return model_name
+
+
+
+def get_joints_from_urdf(urdf_file: str) -> list:
+    try:
+        root = ET.parse(urdf_file).getroot()
+    except ET.ParseError as e:
+        raise ROS2PackageSetupError(f"Invalid URDF XML in {urdf_file}: {e}") from e
+
+    # A position controller is only useful for movable, named joints.
+    return [
+        joint.get("name")
+        for joint in root.findall("joint")
+        if joint.get("name") and joint.get("type") != "fixed"
+    ]
+
+
+def insert_plugin_on_joint_names(urdf_file: str, ) -> str  :
+    joints = get_joints_from_urdf(urdf_file)
+    model_name = get_model_name_from_urdf(urdf_file)
+    str_to_insert = ""
+    for joint in joints:
+        plugin_template = f"""
+        <plugin filename="gz-sim-joint-position-controller-system"
+                name="gz::sim::systems::JointPositionController">
+        <joint_name>{joint}</joint_name>
+        <topic>/{model_name}/{joint}_cmd</topic>
+        <p_gain>2.0</p_gain>
+        <i_gain>0.05</i_gain>
+        <d_gain>0.2</d_gain>
+        <cmd_min>-5</cmd_min>
+        <cmd_max>5</cmd_max>
+        </plugin>"""
+        str_to_insert += plugin_template
+
+    return str_to_insert
 
 
 def validate_target_directory(target_dir: str) -> str:
@@ -387,6 +463,14 @@ def validate_target_directory(target_dir: str) -> str:
         )
     
     return package_name
+
+def write_sdf_file(sdf_file_path: str, content: str) -> None:
+    parent_dir = os.path.dirname(sdf_file_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    with open(sdf_file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"SDF file written: {sdf_file_path}")
 
 
 def setup_ros2_package(target_directory: str) -> None:
@@ -421,8 +505,22 @@ def setup_ros2_package(target_directory: str) -> None:
 
     insert_content_at_line(insert_sdf_file, sdf_file, 1)
 
-    gazebo_models_dir = os.path.expanduser("~/.gazebo/models")
-    deploy_gazebo_model(package_name, urdf_dir, gazebo_models_dir)
+    #mkdir sdf
+    str_to_insert = insert_plugin_on_joint_names(urdf_file)
+    model_name = get_model_name_from_urdf(urdf_file)
+
+    print(f"Plugin content to insert into SDF:\n{str_to_insert}")
+    print("Check your limits of your joints!!!!!-----------------------")
+    #insert this str before /model> in sdf file
+    with open(sdf_file, 'r', encoding='utf-8') as f:
+        sdf_content = f.read()
+        sdf_content = sdf_content.replace("</model>", str_to_insert + "</model>")
+    write_sdf_file(sdf_file, sdf_content)
+    packaged_sdf = os.path.join(target_directory, "model.sdf")
+    shutil.copy2(sdf_file, packaged_sdf)
+    print(f"SDF file copied to {packaged_sdf}")
+    create_model_config(target_directory, model_name, packaged_sdf)
+
 
     temp_sdf = os.path.join(urdf_dir, "model.sdf")
     delete_file(temp_sdf)

@@ -88,4 +88,11 @@ ros2 launch arm_description gazebo.launch.py
 
 ![image-20241221172237859](./assets/image-20241221172237859.png)
 
-In this case, the model is loaded correctly, but no controllers were added, so the behavior shown is due to the absence of control mechanisms.
+With addition of plugin controllers.
+
+### How to test
+[How to test](test_sdf)
+copy the converted folder, park both test_sdf under src/ folder.  test_sdf shoudl consists of the model://model to your converted model
+
+### With controllers and plugins
+![image.png](./assets/image.png)
